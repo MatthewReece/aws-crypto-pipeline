@@ -1,0 +1,20 @@
+=== Terraform Cache and State Files ===
+
+Terraform cache directory
+
+.terraform/
+
+Local state file and backup files
+
+*.tfstate
+.tfstate.
+crash.log
+
+CLI configuration and history
+
+.terraformrc
+terraform.rc
+
+Sensitive variable file
+
+*.tfvars
