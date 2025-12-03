@@ -12,3 +12,13 @@ output "lambda_iam_role_arn" {
   description = "The ARN of the IAM role for the Lambda function."
   value       = aws_iam_role.lambda_exec_role.arn
 }
+
+output "api_url" {
+  description = "Base URL for the crypto API"
+  value       = aws_apigatewayv2_api.crypto_api.api_endpoint
+}
+
+output "crypto_endpoint" {
+  description = "Full crypto endpoint"
+  value       = "${aws_apigatewayv2_api.crypto_api.api_endpoint}/crypto"
+}

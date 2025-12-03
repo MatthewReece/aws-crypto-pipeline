@@ -19,3 +19,13 @@ variable "coingecko_api_key_secret_arn" {
   description = "The ARN of the AWS Secrets Manager secret for the CoinGecko API key."
   type        = string
 }
+
+variable "athena_database" {
+  description = "Name of the Athena database containing bitcoin_daily"
+  type        = string
+}
+
+variable "athena_output_s3" {
+  description = "S3 bucket/prefix where Athena stores query result CSVs"
+  type        = string
+}

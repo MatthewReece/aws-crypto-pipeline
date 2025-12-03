@@ -1,0 +1,18 @@
+{
+  "name": "athena-query-lambda",
+  "version": "1.0.0",
+  "description": "Lambda function to query Athena",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@aws-sdk/client-athena": "^3.940.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.138",
+    "@types/node": "^24.10.1",
+    "esbuild": "^0.27.0",
+    "typescript": "^5.4.5"
+  }
+}

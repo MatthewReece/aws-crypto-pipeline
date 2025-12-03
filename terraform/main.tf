@@ -25,7 +25,6 @@ provider "aws" {
 #------------------------------------------------------------------------------
 # S3 Data Lake Bucket
 #------------------------------------------------------------------------------
-
 resource "aws_s3_bucket" "data_lake" {
   bucket = var.s3_bucket_name
 
@@ -48,8 +47,6 @@ resource "aws_s3_bucket_public_access_block" "data_lake" {
 #------------------------------------------------------------------------------
 # IAM Role and Policy for Lambda
 #------------------------------------------------------------------------------
-
-# Data source to get the current AWS account ID (needed for IAM log ARN)
 data "aws_caller_identity" "current" {}
 
 resource "aws_iam_role" "lambda_exec_role" {
@@ -80,7 +77,6 @@ resource "aws_iam_policy" "lambda_policy" {
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
-      # S3 Permissions for awswrangler
       {
         Sid = "AllowS3Actions",
         Action = [
@@ -94,7 +90,6 @@ resource "aws_iam_policy" "lambda_policy" {
           "${aws_s3_bucket.data_lake.arn}/*"
         ]
       },
-      # CloudWatch Logs Permissions
       {
         Sid      = "AllowLogGroupCreation",
         Action   = "logs:CreateLogGroup",
@@ -110,7 +105,6 @@ resource "aws_iam_policy" "lambda_policy" {
         Effect   = "Allow",
         Resource = "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-etl:*:*"
       },
-      # !! Secrets Manager Read Permission
       {
         Sid = "AllowSecretsManagerRead",
         Action = [
@@ -128,12 +122,9 @@ resource "aws_iam_role_policy_attachment" "lambda_policy_attach" {
   policy_arn = aws_iam_policy.lambda_policy.arn
 }
 
-
 #------------------------------------------------------------------------------
-# Lambda Function and ECR Image
-#------------------------------------------------------------------------------
-
 # ECR Repository for Lambda Docker Image
+#------------------------------------------------------------------------------
 resource "aws_ecr_repository" "lambda_repo" {
   name                 = "${var.project_name}-lambda-repo"
   image_tag_mutability = "MUTABLE"
@@ -147,10 +138,11 @@ resource "aws_ecr_repository" "lambda_repo" {
   }
 }
 
-# This null_resource triggers the Docker build and push to ECR
+#------------------------------------------------------------------------------
+# Build and push Docker image to ECR
+#------------------------------------------------------------------------------
 resource "null_resource" "docker_build_and_push" {
   triggers = {
-    # Re-run if any source file changes
     dockerfile_hash       = filemd5("${path.module}/../lambda/Dockerfile")
     requirements_txt_hash = filemd5("${path.module}/../lambda/src/requirements.txt")
     lambda_src_hash       = filemd5("${path.module}/../lambda/src/lambda_etl.py")
@@ -158,28 +150,25 @@ resource "null_resource" "docker_build_and_push" {
 
   provisioner "local-exec" {
     command     = <<EOT
-      # Login to ECR
       aws ecr get-login-password --region ${var.aws_region} | docker login --username AWS --password-stdin ${aws_ecr_repository.lambda_repo.repository_url}
-
-      # Build the Docker image: Forcing X86_64 architecture for standard AWS compatibility
       docker build --platform linux/amd64 -t ${aws_ecr_repository.lambda_repo.name} ${path.module}/../lambda
-
-      # Tag the image
       docker tag ${aws_ecr_repository.lambda_repo.name}:latest ${aws_ecr_repository.lambda_repo.repository_url}:latest
-
-      # Push the image to ECR
       docker push ${aws_ecr_repository.lambda_repo.repository_url}:latest
     EOT
     interpreter = ["bash", "-c"]
   }
+
   depends_on = [aws_ecr_repository.lambda_repo]
 }
 
+#------------------------------------------------------------------------------
+# Lambda Function
+#------------------------------------------------------------------------------
 resource "aws_lambda_function" "etl_function" {
   function_name = "${var.project_name}-etl"
   role          = aws_iam_role.lambda_exec_role.arn
   timeout       = 60
-  memory_size   = 512 # Increased memory for data processing libraries
+  memory_size   = 512
 
   package_type = "Image"
   image_uri    = "${aws_ecr_repository.lambda_repo.repository_url}:latest"
@@ -188,10 +177,9 @@ resource "aws_lambda_function" "etl_function" {
 
   environment {
     variables = {
-      S3_BUCKET   = aws_s3_bucket.data_lake.id
-      S3_PREFIX   = "raw/coingecko"
-      FILE_FORMAT = "parquet"
-      # Passes the ARN of the secret to the Lambda function
+      S3_BUCKET                     = aws_s3_bucket.data_lake.id
+      S3_PREFIX                     = "raw/coingecko"
+      FILE_FORMAT                   = "parquet"
       COINGECKO_API_KEY_SECRET_NAME = var.coingecko_api_key_secret_arn
     }
   }
@@ -202,9 +190,8 @@ resource "aws_lambda_function" "etl_function" {
 }
 
 #------------------------------------------------------------------------------
-# EventBridge (CloudWatch Events) to schedule the Lambda
+# EventBridge Rule to schedule Lambda daily
 #------------------------------------------------------------------------------
-
 resource "aws_cloudwatch_event_rule" "daily_trigger" {
   name                = "${var.project_name}-daily-trigger"
   description         = "Triggers the crypto ETL Lambda function once a day."
@@ -223,4 +210,34 @@ resource "aws_lambda_permission" "allow_cloudwatch" {
   function_name = aws_lambda_function.etl_function.function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.daily_trigger.arn
+}
+
+
+#------------------------------------------------------------------------------
+# S3 Bucket Policy – Allow QuickSight to Read From Data Lake
+#------------------------------------------------------------------------------
+data "aws_iam_policy_document" "data_lake_policy" {
+  statement {
+    sid = "AllowQuickSightRead"
+
+    principals {
+      type        = "Service"
+      identifiers = ["quicksight.amazonaws.com"]
+    }
+
+    actions = [
+      "s3:GetObject",
+      "s3:ListBucket"
+    ]
+
+    resources = [
+      aws_s3_bucket.data_lake.arn,
+      "${aws_s3_bucket.data_lake.arn}/*"
+    ]
+  }
+}
+
+resource "aws_s3_bucket_policy" "data_lake" {
+  bucket = aws_s3_bucket.data_lake.id
+  policy = data.aws_iam_policy_document.data_lake_policy.json
 }
